@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import {
   collection,
   addDoc,
@@ -27,12 +27,78 @@ interface Note {
   createdAt: string;
 }
 
+type NoteGroupLabel = '오늘' | '어제' | '지난 7일' | '지난 30일' | '그 외';
+
+const NOTE_GROUP_ORDER: NoteGroupLabel[] = [
+  '오늘',
+  '어제',
+  '지난 7일',
+  '지난 30일',
+  '그 외',
+];
+
+const formatKoreanTime = (date: Date) => {
+  const hours = date.getHours();
+  const minutes = date.getMinutes().toString().padStart(2, '0');
+  const period = hours < 12 ? '오전' : '오후';
+  const twelveHour = hours % 12 || 12;
+  return `${period} ${twelveHour}:${minutes}`;
+};
+
+const formatPreviewTimestamp = (createdAt: string) => {
+  const noteDate = new Date(createdAt);
+  if (Number.isNaN(noteDate.getTime())) return '';
+  const today = new Date();
+  const sameDay = noteDate.toDateString() === today.toDateString();
+
+  if (sameDay) {
+    return formatKoreanTime(noteDate);
+  }
+
+  return `${noteDate.getMonth() + 1}월 ${noteDate.getDate()}일`;
+};
+
+const formatDetailTimestamp = (createdAt: string) => {
+  const noteDate = new Date(createdAt);
+  if (Number.isNaN(noteDate.getTime())) return '작성일 정보를 찾을 수 없어요';
+  const weekday = new Intl.DateTimeFormat('ko-KR', { weekday: 'long' }).format(
+    noteDate,
+  );
+  return `${noteDate.getFullYear()}년 ${noteDate.getMonth() + 1}월 ${noteDate.getDate()}일 ${weekday} ${formatKoreanTime(noteDate)}`;
+};
+
+const getNoteGroup = (createdAt: string): NoteGroupLabel => {
+  const noteDate = new Date(createdAt);
+  if (Number.isNaN(noteDate.getTime())) return '그 외';
+
+  const today = new Date();
+  const startOfToday = new Date(
+    today.getFullYear(),
+    today.getMonth(),
+    today.getDate(),
+  ).getTime();
+  const startOfNote = new Date(
+    noteDate.getFullYear(),
+    noteDate.getMonth(),
+    noteDate.getDate(),
+  ).getTime();
+  const diffDays = Math.floor((startOfToday - startOfNote) / 86_400_000);
+
+  if (diffDays <= 0) return '오늘';
+  if (diffDays === 1) return '어제';
+  if (diffDays <= 7) return '지난 7일';
+  if (diffDays <= 30) return '지난 30일';
+  return '그 외';
+};
+
 export default function Home() {
   const [notes, setNotes] = useState<Note[]>([]);
   const [selectedNote, setSelectedNote] = useState<Note | null>(null);
   const [title, setTitle] = useState('');
   const [content, setContent] = useState('');
   const [newTodo, setNewTodo] = useState('');
+  const [searchTerm, setSearchTerm] = useState('');
+  const [viewMode, setViewMode] = useState<'list' | 'split' | 'gallery'>('split');
   const [loading, setLoading] = useState(true);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [isComposing, setIsComposing] = useState(false);
@@ -297,6 +363,41 @@ export default function Home() {
     }
   };
 
+  const filteredNotes = useMemo(() => {
+    if (!searchTerm.trim()) return notes;
+    const term = searchTerm.trim().toLowerCase();
+    return notes.filter((note) => {
+      const base = `${note.title ?? ''} ${note.content ?? ''}`.toLowerCase();
+      const todoMatch = note.todos.some((todo) =>
+        todo.text.toLowerCase().includes(term),
+      );
+      return base.includes(term) || todoMatch;
+    });
+  }, [notes, searchTerm]);
+
+  const groupedNotes = useMemo(() => {
+    const groups: Record<NoteGroupLabel, Note[]> = {
+      오늘: [],
+      어제: [],
+      '지난 7일': [],
+      '지난 30일': [],
+      '그 외': [],
+    };
+
+    filteredNotes.forEach((note) => {
+      const groupLabel = getNoteGroup(note.createdAt);
+      groups[groupLabel].push(note);
+    });
+
+    NOTE_GROUP_ORDER.forEach((group) => {
+      groups[group].sort((a, b) =>
+        new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime(),
+      );
+    });
+
+    return groups;
+  }, [filteredNotes]);
+
   if (loading) {
     return (
       <div className="flex h-screen items-center justify-center bg-gray-50 dark:bg-gray-900">
@@ -337,199 +438,321 @@ export default function Home() {
   }
 
   return (
-    <div className="flex h-screen bg-gray-50 dark:bg-gray-900">
-      {/* 사이드바 - 메모 목록 */}
-      <div className="w-64 bg-white dark:bg-gray-800 border-r border-gray-200 dark:border-gray-700 flex flex-col">
-        <div className="p-4 border-b border-gray-200 dark:border-gray-700">
+    <div className="flex h-screen flex-col bg-[#f3f4f7] text-gray-900">
+      <header className="flex items-center justify-between border-b border-gray-200 bg-white px-6 py-3 shadow-sm">
+        <div className="flex items-center gap-2">
+          {[
+            { label: '단일 목록', value: 'list' },
+            { label: '2열', value: 'split' },
+            { label: '갤러리', value: 'gallery' },
+          ].map((option) => (
+            <button
+              key={option.value}
+              onClick={() => setViewMode(option.value as typeof viewMode)}
+              className={`flex h-10 w-10 items-center justify-center rounded-lg border text-sm transition-colors ${
+                viewMode === option.value
+                  ? 'border-gray-900 bg-gray-900 text-white'
+                  : 'border-gray-200 text-gray-500 hover:border-gray-300 hover:text-gray-800'
+              }`}
+            >
+              {option.value === 'list' && (
+                <span className="text-lg">≡</span>
+              )}
+              {option.value === 'split' && (
+                <span className="text-lg">▤</span>
+              )}
+              {option.value === 'gallery' && (
+                <span className="text-lg">▦</span>
+              )}
+            </button>
+          ))}
+        </div>
+        <div className="flex items-center gap-3">
+          <div className="relative">
+            <input
+              type="text"
+              value={searchTerm}
+              onChange={(e) => setSearchTerm(e.target.value)}
+              placeholder="검색"
+              className="w-64 rounded-full border border-gray-200 bg-gray-50 py-2 pl-10 pr-4 text-sm text-gray-900 placeholder:text-gray-400 focus:border-gray-400 focus:outline-none"
+            />
+            <svg
+              xmlns="http://www.w3.org/2000/svg"
+              fill="none"
+              viewBox="0 0 24 24"
+              strokeWidth={1.5}
+              stroke="currentColor"
+              className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-400"
+              aria-hidden
+            >
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                d="M21 21l-4.35-4.35M17 10a7 7 0 11-14 0 7 7 0 0114 0z"
+              />
+            </svg>
+          </div>
           <button
             onClick={createNewNote}
-            className="w-full px-4 py-2 bg-blue-500 hover:bg-blue-600 text-white rounded-lg font-medium transition-colors"
+            className="rounded-full border border-gray-200 px-5 py-2 text-sm font-medium text-gray-700 hover:border-gray-300 hover:bg-gray-50"
           >
-            + 새 메모
+            새 메모
+          </button>
+          <button
+            onClick={() => {
+              if (selectedNote) {
+                deleteNote(selectedNote.id);
+              }
+            }}
+            className="rounded-full border border-gray-200 px-5 py-2 text-sm font-medium text-gray-500 hover:border-red-200 hover:text-red-600"
+          >
+            삭제
           </button>
         </div>
-        <div className="flex-1 overflow-y-auto">
-          {notes.length === 0 ? (
-            <div className="p-4 text-center text-gray-500 dark:text-gray-400 text-sm">
-              메모가 없습니다
-            </div>
-          ) : (
-            notes.map((note) => (
-              <div
-                key={note.id}
-                className={`p-3 border-b border-gray-200 dark:border-gray-700 cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors ${
-                  selectedNote?.id === note.id
-                    ? 'bg-blue-50 dark:bg-blue-900/20 border-l-4 border-l-blue-500'
-                    : ''
-                }`}
-                onClick={() => selectNote(note)}
-              >
-                <div className="flex items-start justify-between">
-                  <div className="flex-1 min-w-0">
-                    <h3 className="font-medium text-gray-900 dark:text-gray-100 truncate">
-                      {note.title || '제목 없음'}
-                    </h3>
-                    <p className="text-xs text-gray-500 dark:text-gray-400 mt-1 truncate">
-                      {note.content || '내용 없음'}
+      </header>
+
+      <div className="flex flex-1 overflow-hidden">
+        <aside className="flex w-80 flex-col border-r border-gray-200 bg-[#f9f9fb]">
+          <div className="border-b border-gray-200 px-6 py-5">
+            <p className="text-xs font-semibold uppercase tracking-widest text-gray-500">
+              받은 편지함
+            </p>
+            <p className="mt-2 text-sm text-gray-500">총 {notes.length}개의 메모</p>
+          </div>
+          <div className="flex-1 space-y-6 overflow-y-auto px-4 py-6">
+            {notes.length === 0 ? (
+              <p className="text-center text-sm text-gray-400">
+                아직 작성된 메모가 없습니다.
+              </p>
+            ) : (
+              NOTE_GROUP_ORDER.map((group) => {
+                const groupNotes = groupedNotes[group];
+                if (!groupNotes || groupNotes.length === 0) return null;
+                return (
+                  <div key={group}>
+                    <p className="text-xs font-semibold uppercase tracking-[0.3em] text-gray-400">
+                      {group}
                     </p>
-                    {note.todos.length > 0 && (
-                      <div className="text-xs text-gray-400 dark:text-gray-500 mt-1">
-                        투두 {note.todos.filter((t) => t.completed).length}/
-                        {note.todos.length}
-                      </div>
-                    )}
+                    <div className="mt-3 space-y-2">
+                      {groupNotes.map((note) => {
+                        const todoCount = note.todos.length;
+                        const completedCount = note.todos.filter(
+                          (todo) => todo.completed,
+                        ).length;
+                        const isActive = selectedNote?.id === note.id;
+
+                        return (
+                          <button
+                            key={note.id}
+                            onClick={() => selectNote(note)}
+                            className={`relative w-full rounded-2xl border px-4 py-3 text-left transition-all ${
+                              isActive
+                                ? 'border-gray-900 bg-white shadow-md'
+                                : 'border-transparent bg-transparent hover:border-gray-200 hover:bg-white'
+                            }`}
+                          >
+                            <div className="flex items-center justify-between text-xs text-gray-400">
+                              <span>{formatPreviewTimestamp(note.createdAt)}</span>
+                              {todoCount > 0 && (
+                                <span>
+                                  체크 {completedCount}/{todoCount}
+                                </span>
+                              )}
+                            </div>
+                            <p className="mt-1 text-base font-semibold text-gray-900">
+                              {note.title || '제목 없음'}
+                            </p>
+                            <p
+                              className="mt-1 text-sm text-gray-500"
+                              style={{
+                                display: '-webkit-box',
+                                WebkitLineClamp: 2,
+                                WebkitBoxOrient: 'vertical',
+                                overflow: 'hidden',
+                              }}
+                            >
+                              {note.content || '내용 없음'}
+                            </p>
+                            <button
+                              onClick={(event) => {
+                                event.stopPropagation();
+                                deleteNote(note.id);
+                              }}
+                              className="absolute right-4 top-3 text-xs text-gray-300 hover:text-red-500"
+                            >
+                              삭제
+                            </button>
+                          </button>
+                        );
+                      })}
+                    </div>
                   </div>
-                  <button
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      deleteNote(note.id);
-                    }}
-                    className="ml-2 text-gray-400 hover:text-red-500 transition-colors"
-                  >
-                    ×
-                  </button>
+                );
+              })
+            )}
+          </div>
+        </aside>
+
+        <main className="flex flex-1 flex-col bg-white">
+          {selectedNote ? (
+            <>
+              <div className="border-b border-gray-200 px-10 py-8">
+                <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+                  <div className="flex-1">
+                    <input
+                      type="text"
+                      value={title}
+                      onChange={(e) => {
+                        markTyping();
+                        setTitle(e.target.value);
+                      }}
+                      onCompositionStart={() => {
+                        setIsComposing(true);
+                        if (typingTimeoutRef.current) {
+                          clearTimeout(typingTimeoutRef.current);
+                        }
+                      }}
+                      onCompositionEnd={(e) => {
+                        setIsComposing(false);
+                        markTyping();
+                        setTitle(e.currentTarget.value);
+                      }}
+                      placeholder="제목 없음"
+                      className="w-full border-none bg-transparent text-3xl font-semibold text-gray-900 placeholder:text-gray-300 focus:outline-none"
+                    />
+                    <div className="mt-3 flex flex-wrap items-center gap-2 text-sm text-gray-500">
+                      <span>{formatDetailTimestamp(selectedNote.createdAt)}</span>
+                      <span className="h-1 w-1 rounded-full bg-gray-300" />
+                      <span>
+                        체크리스트 {selectedNote.todos.filter((todo) => todo.completed).length}
+                        /{selectedNote.todos.length}
+                      </span>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <button
+                      onClick={createNewNote}
+                      className="rounded-xl border border-gray-200 px-4 py-2 text-sm font-medium text-gray-700 hover:border-gray-300"
+                    >
+                      새 메모 작성
+                    </button>
+                    <button
+                      onClick={() => deleteNote(selectedNote.id)}
+                      className="rounded-xl border border-gray-200 px-4 py-2 text-sm font-medium text-gray-500 hover:border-red-200 hover:text-red-600"
+                    >
+                      현재 메모 삭제
+                    </button>
+                  </div>
                 </div>
               </div>
-            ))
-          )}
-        </div>
-      </div>
 
-      {/* 메인 영역 - 메모 편집 */}
-      <div className="flex-1 flex flex-col">
-        {selectedNote ? (
-          <>
-            {/* 제목 입력 */}
-            <div className="p-4 border-b border-gray-200 dark:border-gray-700">
-              <input
-                type="text"
-                value={title}
-                onChange={(e) => {
-                  markTyping();
-                  setTitle(e.target.value);
-                }}
-                onCompositionStart={() => {
-                  setIsComposing(true);
-                  if (typingTimeoutRef.current) {
-                    clearTimeout(typingTimeoutRef.current);
-                  }
-                }}
-                onCompositionEnd={(e) => {
-                  setIsComposing(false);
-                  markTyping();
-                  setTitle(e.currentTarget.value);
-                }}
-                placeholder="메모 제목을 입력하세요"
-                className="w-full text-2xl font-bold bg-transparent border-none outline-none text-gray-900 dark:text-gray-100 placeholder-gray-400"
-              />
-            </div>
+              <div className="flex-1 space-y-8 overflow-y-auto bg-[#fcfcfd] px-10 py-8">
+                <div className="rounded-2xl border border-gray-200 bg-white p-6 shadow-sm">
+                  <textarea
+                    value={content}
+                    onChange={(e) => {
+                      markTyping();
+                      setContent(e.target.value);
+                    }}
+                    onCompositionStart={() => {
+                      setIsComposing(true);
+                      if (typingTimeoutRef.current) {
+                        clearTimeout(typingTimeoutRef.current);
+                      }
+                    }}
+                    onCompositionEnd={(e) => {
+                      setIsComposing(false);
+                      markTyping();
+                      setContent(e.currentTarget.value);
+                    }}
+                    placeholder="내용을 입력하세요..."
+                    className="min-h-[240px] w-full resize-none border-none bg-transparent text-base leading-relaxed text-gray-700 placeholder:text-gray-400 focus:outline-none"
+                  />
+                </div>
 
-            {/* 내용 입력 */}
-            <div className="flex-1 p-4 overflow-y-auto">
-              <textarea
-                value={content}
-                onChange={(e) => {
-                  markTyping();
-                  setContent(e.target.value);
-                }}
-                onCompositionStart={() => {
-                  setIsComposing(true);
-                  if (typingTimeoutRef.current) {
-                    clearTimeout(typingTimeoutRef.current);
-                  }
-                }}
-                onCompositionEnd={(e) => {
-                  setIsComposing(false);
-                  markTyping();
-                  setContent(e.currentTarget.value);
-                }}
-                placeholder="메모 내용을 입력하세요..."
-                className="w-full h-full bg-transparent border-none outline-none resize-none text-gray-700 dark:text-gray-300 placeholder-gray-400"
-              />
-            </div>
-
-            {/* 투두 리스트 */}
-            <div className="border-t border-gray-200 dark:border-gray-700 p-4 bg-white dark:bg-gray-800">
-              <h3 className="font-semibold text-gray-900 dark:text-gray-100 mb-3">
-                투두 리스트
-              </h3>
-
-              {/* 투두 입력 */}
-              <div className="flex gap-2 mb-4">
-                <input
-                  type="text"
-                  value={newTodo}
-                  onChange={(e) => setNewTodo(e.target.value)}
-                  onKeyPress={(e) => {
-                    if (e.key === 'Enter') {
-                      addTodo();
-                    }
-                  }}
-                  placeholder="새 투두 추가..."
-                  className="flex-1 px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500"
-                />
-                <button
-                  onClick={addTodo}
-                  className="px-4 py-2 bg-blue-500 hover:bg-blue-600 text-white rounded-lg font-medium transition-colors"
-                >
-                  추가
-                </button>
-              </div>
-
-              {/* 투두 목록 */}
-              <div className="space-y-2 max-h-64 overflow-y-auto">
-                {selectedNote.todos.length === 0 ? (
-                  <p className="text-sm text-gray-500 dark:text-gray-400 text-center py-4">
-                    투두가 없습니다
-                  </p>
-                ) : (
-                  selectedNote.todos.map((todo) => (
-                    <div
-                      key={todo.id}
-                      className="flex items-center gap-3 p-2 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors"
-                    >
+                <div className="rounded-2xl border border-gray-200 bg-white p-6 shadow-sm">
+                  <div className="flex flex-wrap items-center justify-between gap-3">
+                    <div>
+                      <h3 className="text-lg font-semibold text-gray-900">체크리스트</h3>
+                      <p className="text-sm text-gray-500">
+                        할 일 {selectedNote.todos.filter((todo) => todo.completed).length}개 완료
+                      </p>
+                    </div>
+                    <div className="flex flex-1 gap-2 md:flex-none">
                       <input
-                        type="checkbox"
-                        checked={todo.completed}
-                        onChange={() => toggleTodo(todo.id)}
-                        className="w-5 h-5 text-blue-500 rounded focus:ring-blue-500"
+                        type="text"
+                        value={newTodo}
+                        onChange={(e) => setNewTodo(e.target.value)}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter') {
+                            addTodo();
+                          }
+                        }}
+                        placeholder="새 할 일을 입력하세요"
+                        className="flex-1 rounded-xl border border-gray-200 px-4 py-2 text-sm focus:border-gray-400 focus:outline-none"
                       />
-                      <span
-                        className={`flex-1 ${
-                          todo.completed
-                            ? 'line-through text-gray-500 dark:text-gray-400'
-                            : 'text-gray-900 dark:text-gray-100'
-                        }`}
-                      >
-                        {todo.text}
-                      </span>
                       <button
-                        onClick={() => deleteTodo(todo.id)}
-                        className="text-gray-400 hover:text-red-500 transition-colors px-2"
+                        onClick={addTodo}
+                        className="rounded-xl bg-gray-900 px-4 py-2 text-sm font-semibold text-white shadow-sm hover:bg-gray-800"
                       >
-                        삭제
+                        추가
                       </button>
                     </div>
-                  ))
-                )}
+                  </div>
+
+                  <div className="mt-5 space-y-3">
+                    {selectedNote.todos.length === 0 ? (
+                      <p className="rounded-xl border border-dashed border-gray-300 px-4 py-6 text-center text-sm text-gray-400">
+                        아직 등록된 체크리스트가 없습니다.
+                      </p>
+                    ) : (
+                      selectedNote.todos.map((todo) => (
+                        <div
+                          key={todo.id}
+                          className="flex items-center gap-4 rounded-2xl border border-gray-100 bg-gray-50 px-4 py-3"
+                        >
+                          <input
+                            type="checkbox"
+                            checked={todo.completed}
+                            onChange={() => toggleTodo(todo.id)}
+                            className="h-5 w-5 rounded border-gray-300 text-gray-900 focus:ring-gray-900"
+                          />
+                          <span
+                            className={`flex-1 text-sm ${
+                              todo.completed ? 'text-gray-400 line-through' : 'text-gray-800'
+                            }`}
+                          >
+                            {todo.text}
+                          </span>
+                          <button
+                            onClick={() => deleteTodo(todo.id)}
+                            className="text-sm text-gray-400 hover:text-red-500"
+                          >
+                            삭제
+                          </button>
+                        </div>
+                      ))
+                    )}
+                  </div>
+                </div>
+              </div>
+            </>
+          ) : (
+            <div className="flex flex-1 items-center justify-center bg-white">
+              <div className="text-center">
+                <p className="text-lg text-gray-500">
+                  왼쪽 목록에서 메모를 선택하거나 새로 작성해보세요.
+                </p>
+                <button
+                  onClick={createNewNote}
+                  className="mt-4 rounded-full bg-gray-900 px-6 py-2 text-sm font-medium text-white shadow-sm"
+                >
+                  새 메모 만들기
+                </button>
               </div>
             </div>
-          </>
-        ) : (
-          <div className="flex-1 flex items-center justify-center">
-            <div className="text-center">
-              <p className="text-gray-500 dark:text-gray-400 text-lg mb-4">
-                메모를 선택하거나 새 메모를 만들어주세요
-              </p>
-              <button
-                onClick={createNewNote}
-                className="px-6 py-3 bg-pink-500 hover:bg-pink-600 text-white rounded-lg font-medium transition-colors"
-              >
-                새 메모 만들기
-              </button>
-            </div>
-          </div>
-        )}
+          )}
+        </main>
       </div>
     </div>
   );
