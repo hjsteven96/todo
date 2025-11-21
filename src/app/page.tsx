@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import {
   collection,
   addDoc,
@@ -35,6 +35,29 @@ export default function Home() {
   const [newTodo, setNewTodo] = useState('');
   const [loading, setLoading] = useState(true);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [isComposing, setIsComposing] = useState(false);
+  const [isTyping, setIsTyping] = useState(false);
+  const typingTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const isTypingRef = useRef(false);
+  const isComposingRef = useRef(false);
+
+  useEffect(() => {
+    isTypingRef.current = isTyping;
+  }, [isTyping]);
+
+  useEffect(() => {
+    isComposingRef.current = isComposing;
+  }, [isComposing]);
+
+  const markTyping = () => {
+    setIsTyping(true);
+    if (typingTimeoutRef.current) {
+      clearTimeout(typingTimeoutRef.current);
+    }
+    typingTimeoutRef.current = setTimeout(() => {
+      setIsTyping(false);
+    }, 800);
+  };
 
   // Firestore에서 메모 불러오기
   useEffect(() => {
@@ -72,15 +95,19 @@ export default function Home() {
               (note) => note.id === previous.id,
             );
             if (updatedSelected) {
-              setTitle(updatedSelected.title);
-              setContent(updatedSelected.content);
+              if (!isTypingRef.current && !isComposingRef.current) {
+                setTitle(updatedSelected.title);
+                setContent(updatedSelected.content);
+              }
               return updatedSelected;
             }
           }
 
           const firstNote = notesData[0];
-          setTitle(firstNote.title);
-          setContent(firstNote.content);
+          if (!isTypingRef.current && !isComposingRef.current) {
+            setTitle(firstNote.title);
+            setContent(firstNote.content);
+          }
           return firstNote;
         });
       },
@@ -130,33 +157,48 @@ export default function Home() {
     setNewTodo('');
   };
 
-  // 메모 업데이트
-  const updateNote = async (field: 'title' | 'content', value: string) => {
-    if (!selectedNote) return;
+  // 메모 필드 저장 (디바운스용)
+  const saveNoteField = useCallback(
+    async (field: 'title' | 'content', value: string) => {
+      if (!selectedNote) return;
 
-    try {
-      const noteRef = doc(db, 'notes', selectedNote.id);
-      const updatedNote = {
-        ...selectedNote,
-        [field]: value,
-      };
+      try {
+        const noteRef = doc(db, 'notes', selectedNote.id);
 
-      await updateDoc(noteRef, {
-        [field]: value,
-      });
+        await updateDoc(noteRef, {
+          [field]: value,
+        });
 
-      setSelectedNote(updatedNote);
-
-      if (field === 'title') {
-        setTitle(value);
-      } else {
-        setContent(value);
+        setSelectedNote((previous) => {
+          if (!previous || previous.id !== selectedNote.id) return previous;
+          return {
+            ...previous,
+            [field]: value,
+          };
+        });
+      } catch (error) {
+        console.error('메모 업데이트 오류:', error);
+        alert('메모 업데이트에 실패했습니다.');
       }
-    } catch (error) {
-      console.error('메모 업데이트 오류:', error);
-      alert('메모 업데이트에 실패했습니다.');
-    }
-  };
+    },
+    [selectedNote],
+  );
+
+  // 제목/내용 입력값을 일정 시간 후 저장
+  useEffect(() => {
+    if (!selectedNote || isComposing) return;
+
+    const handler = setTimeout(() => {
+      if (title !== selectedNote.title) {
+        saveNoteField('title', title);
+      }
+      if (content !== selectedNote.content) {
+        saveNoteField('content', content);
+      }
+    }, 500);
+
+    return () => clearTimeout(handler);
+  }, [title, content, selectedNote, isComposing, saveNoteField]);
 
   // 투두 추가
   const addTodo = async () => {
@@ -362,7 +404,21 @@ export default function Home() {
               <input
                 type="text"
                 value={title}
-                onChange={(e) => updateNote('title', e.target.value)}
+                onChange={(e) => {
+                  markTyping();
+                  setTitle(e.target.value);
+                }}
+                onCompositionStart={() => {
+                  setIsComposing(true);
+                  if (typingTimeoutRef.current) {
+                    clearTimeout(typingTimeoutRef.current);
+                  }
+                }}
+                onCompositionEnd={(e) => {
+                  setIsComposing(false);
+                  markTyping();
+                  setTitle(e.currentTarget.value);
+                }}
                 placeholder="메모 제목을 입력하세요"
                 className="w-full text-2xl font-bold bg-transparent border-none outline-none text-gray-900 dark:text-gray-100 placeholder-gray-400"
               />
@@ -372,7 +428,21 @@ export default function Home() {
             <div className="flex-1 p-4 overflow-y-auto">
               <textarea
                 value={content}
-                onChange={(e) => updateNote('content', e.target.value)}
+                onChange={(e) => {
+                  markTyping();
+                  setContent(e.target.value);
+                }}
+                onCompositionStart={() => {
+                  setIsComposing(true);
+                  if (typingTimeoutRef.current) {
+                    clearTimeout(typingTimeoutRef.current);
+                  }
+                }}
+                onCompositionEnd={(e) => {
+                  setIsComposing(false);
+                  markTyping();
+                  setContent(e.currentTarget.value);
+                }}
                 placeholder="메모 내용을 입력하세요..."
                 className="w-full h-full bg-transparent border-none outline-none resize-none text-gray-700 dark:text-gray-300 placeholder-gray-400"
               />
