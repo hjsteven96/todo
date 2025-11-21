@@ -1,65 +1,330 @@
-import Image from "next/image";
+'use client';
+
+import { useState, useEffect } from 'react';
+
+interface Todo {
+  id: string;
+  text: string;
+  completed: boolean;
+}
+
+interface Note {
+  id: string;
+  title: string;
+  content: string;
+  todos: Todo[];
+  createdAt: string;
+}
 
 export default function Home() {
+  const [notes, setNotes] = useState<Note[]>([]);
+  const [selectedNote, setSelectedNote] = useState<Note | null>(null);
+  const [title, setTitle] = useState('');
+  const [content, setContent] = useState('');
+  const [newTodo, setNewTodo] = useState('');
+
+  // 로컬 스토리지에서 메모 불러오기
+  useEffect(() => {
+    const savedNotes = localStorage.getItem('notes');
+    if (savedNotes) {
+      const parsedNotes = JSON.parse(savedNotes);
+      setNotes(parsedNotes);
+      if (parsedNotes.length > 0) {
+        setSelectedNote(parsedNotes[0]);
+        setTitle(parsedNotes[0].title);
+        setContent(parsedNotes[0].content);
+      }
+    }
+  }, []);
+
+  // 메모 저장
+  const saveNotes = (updatedNotes: Note[]) => {
+    setNotes(updatedNotes);
+    localStorage.setItem('notes', JSON.stringify(updatedNotes));
+  };
+
+  // 새 메모 생성
+  const createNewNote = () => {
+    const newNote: Note = {
+      id: Date.now().toString(),
+      title: '새 메모',
+      content: '',
+      todos: [],
+      createdAt: new Date().toISOString(),
+    };
+    const updatedNotes = [newNote, ...notes];
+    saveNotes(updatedNotes);
+    setSelectedNote(newNote);
+    setTitle(newNote.title);
+    setContent(newNote.content);
+    setNewTodo('');
+  };
+
+  // 메모 선택
+  const selectNote = (note: Note) => {
+    setSelectedNote(note);
+    setTitle(note.title);
+    setContent(note.content);
+    setNewTodo('');
+  };
+
+  // 메모 업데이트
+  const updateNote = (field: 'title' | 'content', value: string) => {
+    if (!selectedNote) return;
+
+    const updatedNote = {
+      ...selectedNote,
+      [field]: value,
+    };
+    const updatedNotes = notes.map((note) =>
+      note.id === selectedNote.id ? updatedNote : note
+    );
+    saveNotes(updatedNotes);
+    setSelectedNote(updatedNote);
+
+    if (field === 'title') {
+      setTitle(value);
+    } else {
+      setContent(value);
+    }
+  };
+
+  // 투두 추가
+  const addTodo = () => {
+    if (!newTodo.trim() || !selectedNote) return;
+
+    const todo: Todo = {
+      id: Date.now().toString(),
+      text: newTodo.trim(),
+      completed: false,
+    };
+
+    const updatedNote = {
+      ...selectedNote,
+      todos: [...selectedNote.todos, todo],
+    };
+    const updatedNotes = notes.map((note) =>
+      note.id === selectedNote.id ? updatedNote : note
+    );
+    saveNotes(updatedNotes);
+    setSelectedNote(updatedNote);
+    setNewTodo('');
+  };
+
+  // 투두 완료 토글
+  const toggleTodo = (todoId: string) => {
+    if (!selectedNote) return;
+
+    const updatedNote = {
+      ...selectedNote,
+      todos: selectedNote.todos.map((todo) =>
+        todo.id === todoId ? { ...todo, completed: !todo.completed } : todo
+      ),
+    };
+    const updatedNotes = notes.map((note) =>
+      note.id === selectedNote.id ? updatedNote : note
+    );
+    saveNotes(updatedNotes);
+    setSelectedNote(updatedNote);
+  };
+
+  // 투두 삭제
+  const deleteTodo = (todoId: string) => {
+    if (!selectedNote) return;
+
+    const updatedNote = {
+      ...selectedNote,
+      todos: selectedNote.todos.filter((todo) => todo.id !== todoId),
+    };
+    const updatedNotes = notes.map((note) =>
+      note.id === selectedNote.id ? updatedNote : note
+    );
+    saveNotes(updatedNotes);
+    setSelectedNote(updatedNote);
+  };
+
+  // 메모 삭제
+  const deleteNote = (noteId: string) => {
+    const updatedNotes = notes.filter((note) => note.id !== noteId);
+    saveNotes(updatedNotes);
+    if (selectedNote?.id === noteId) {
+      if (updatedNotes.length > 0) {
+        selectNote(updatedNotes[0]);
+      } else {
+        setSelectedNote(null);
+        setTitle('');
+        setContent('');
+      }
+    }
+  };
+
   return (
-    <div className="flex min-h-screen items-center justify-center bg-zinc-50 font-sans dark:bg-black">
-      <main className="flex min-h-screen w-full max-w-3xl flex-col items-center justify-between py-32 px-16 bg-white dark:bg-black sm:items-start">
-        <Image
-          className="dark:invert"
-          src="/next.svg"
-          alt="Next.js logo"
-          width={100}
-          height={20}
-          priority
-        />
-        <div className="flex flex-col items-center gap-6 text-center sm:items-start sm:text-left">
-          <h1 className="max-w-xs text-3xl font-semibold leading-10 tracking-tight text-black dark:text-zinc-50">
-            To get started, edit the page.tsx file.
-          </h1>
-          <p className="max-w-md text-lg leading-8 text-zinc-600 dark:text-zinc-400">
-            Looking for a starting point or more instructions? Head over to{" "}
-            <a
-              href="https://vercel.com/templates?framework=next.js&utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Templates
-            </a>{" "}
-            or the{" "}
-            <a
-              href="https://nextjs.org/learn?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Learning
-            </a>{" "}
-            center.
-          </p>
-        </div>
-        <div className="flex flex-col gap-4 text-base font-medium sm:flex-row">
-          <a
-            className="flex h-12 w-full items-center justify-center gap-2 rounded-full bg-foreground px-5 text-background transition-colors hover:bg-[#383838] dark:hover:bg-[#ccc] md:w-[158px]"
-            href="https://vercel.com/new?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
+    <div className="flex h-screen bg-gray-50 dark:bg-gray-900">
+      {/* 사이드바 - 메모 목록 */}
+      <div className="w-64 bg-white dark:bg-gray-800 border-r border-gray-200 dark:border-gray-700 flex flex-col">
+        <div className="p-4 border-b border-gray-200 dark:border-gray-700">
+          <button
+            onClick={createNewNote}
+            className="w-full px-4 py-2 bg-blue-500 hover:bg-blue-600 text-white rounded-lg font-medium transition-colors"
           >
-            <Image
-              className="dark:invert"
-              src="/vercel.svg"
-              alt="Vercel logomark"
-              width={16}
-              height={16}
-            />
-            Deploy Now
-          </a>
-          <a
-            className="flex h-12 w-full items-center justify-center rounded-full border border-solid border-black/[.08] px-5 transition-colors hover:border-transparent hover:bg-black/[.04] dark:border-white/[.145] dark:hover:bg-[#1a1a1a] md:w-[158px]"
-            href="https://nextjs.org/docs?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            Documentation
-          </a>
+            + 새 메모
+          </button>
         </div>
-      </main>
+        <div className="flex-1 overflow-y-auto">
+          {notes.length === 0 ? (
+            <div className="p-4 text-center text-gray-500 dark:text-gray-400 text-sm">
+              메모가 없습니다
+            </div>
+          ) : (
+            notes.map((note) => (
+              <div
+                key={note.id}
+                className={`p-3 border-b border-gray-200 dark:border-gray-700 cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors ${
+                  selectedNote?.id === note.id
+                    ? 'bg-blue-50 dark:bg-blue-900/20 border-l-4 border-l-blue-500'
+                    : ''
+                }`}
+                onClick={() => selectNote(note)}
+              >
+                <div className="flex items-start justify-between">
+                  <div className="flex-1 min-w-0">
+                    <h3 className="font-medium text-gray-900 dark:text-gray-100 truncate">
+                      {note.title || '제목 없음'}
+                    </h3>
+                    <p className="text-xs text-gray-500 dark:text-gray-400 mt-1 truncate">
+                      {note.content || '내용 없음'}
+                    </p>
+                    {note.todos.length > 0 && (
+                      <div className="text-xs text-gray-400 dark:text-gray-500 mt-1">
+                        투두 {note.todos.filter((t) => t.completed).length}/
+                        {note.todos.length}
+                      </div>
+                    )}
+                  </div>
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      deleteNote(note.id);
+                    }}
+                    className="ml-2 text-gray-400 hover:text-red-500 transition-colors"
+                  >
+                    ×
+                  </button>
+                </div>
+              </div>
+            ))
+          )}
+        </div>
+      </div>
+
+      {/* 메인 영역 - 메모 편집 */}
+      <div className="flex-1 flex flex-col">
+        {selectedNote ? (
+          <>
+            {/* 제목 입력 */}
+            <div className="p-4 border-b border-gray-200 dark:border-gray-700">
+              <input
+                type="text"
+                value={title}
+                onChange={(e) => updateNote('title', e.target.value)}
+                placeholder="메모 제목을 입력하세요"
+                className="w-full text-2xl font-bold bg-transparent border-none outline-none text-gray-900 dark:text-gray-100 placeholder-gray-400"
+              />
+            </div>
+
+            {/* 내용 입력 */}
+            <div className="flex-1 p-4 overflow-y-auto">
+              <textarea
+                value={content}
+                onChange={(e) => updateNote('content', e.target.value)}
+                placeholder="메모 내용을 입력하세요..."
+                className="w-full h-full bg-transparent border-none outline-none resize-none text-gray-700 dark:text-gray-300 placeholder-gray-400"
+              />
+            </div>
+
+            {/* 투두 리스트 */}
+            <div className="border-t border-gray-200 dark:border-gray-700 p-4 bg-white dark:bg-gray-800">
+              <h3 className="font-semibold text-gray-900 dark:text-gray-100 mb-3">
+                투두 리스트
+              </h3>
+
+              {/* 투두 입력 */}
+              <div className="flex gap-2 mb-4">
+                <input
+                  type="text"
+                  value={newTodo}
+                  onChange={(e) => setNewTodo(e.target.value)}
+                  onKeyPress={(e) => {
+                    if (e.key === 'Enter') {
+                      addTodo();
+                    }
+                  }}
+                  placeholder="새 투두 추가..."
+                  className="flex-1 px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                />
+                <button
+                  onClick={addTodo}
+                  className="px-4 py-2 bg-blue-500 hover:bg-blue-600 text-white rounded-lg font-medium transition-colors"
+                >
+                  추가
+                </button>
+              </div>
+
+              {/* 투두 목록 */}
+              <div className="space-y-2 max-h-64 overflow-y-auto">
+                {selectedNote.todos.length === 0 ? (
+                  <p className="text-sm text-gray-500 dark:text-gray-400 text-center py-4">
+                    투두가 없습니다
+                  </p>
+                ) : (
+                  selectedNote.todos.map((todo) => (
+                    <div
+                      key={todo.id}
+                      className="flex items-center gap-3 p-2 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors"
+                    >
+                      <input
+                        type="checkbox"
+                        checked={todo.completed}
+                        onChange={() => toggleTodo(todo.id)}
+                        className="w-5 h-5 text-blue-500 rounded focus:ring-blue-500"
+                      />
+                      <span
+                        className={`flex-1 ${
+                          todo.completed
+                            ? 'line-through text-gray-500 dark:text-gray-400'
+                            : 'text-gray-900 dark:text-gray-100'
+                        }`}
+                      >
+                        {todo.text}
+                      </span>
+                      <button
+                        onClick={() => deleteTodo(todo.id)}
+                        className="text-gray-400 hover:text-red-500 transition-colors px-2"
+                      >
+                        삭제
+                      </button>
+                    </div>
+                  ))
+                )}
+              </div>
+            </div>
+          </>
+        ) : (
+          <div className="flex-1 flex items-center justify-center">
+            <div className="text-center">
+              <p className="text-gray-500 dark:text-gray-400 text-lg mb-4">
+                메모를 선택하거나 새 메모를 만들어주세요
+              </p>
+              <button
+                onClick={createNewNote}
+                className="px-6 py-3 bg-pink-500 hover:bg-pink-600 text-white rounded-lg font-medium transition-colors"
+              >
+                새 메모 만들기
+              </button>
+            </div>
+          </div>
+        )}
+      </div>
     </div>
   );
 }
