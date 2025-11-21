@@ -1,16 +1,15 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { 
-  collection, 
-  addDoc, 
-  updateDoc, 
-  deleteDoc, 
-  doc, 
-  getDocs, 
-  query, 
+import {
+  collection,
+  addDoc,
+  updateDoc,
+  deleteDoc,
+  doc,
+  query,
   orderBy,
-  onSnapshot 
+  onSnapshot,
 } from 'firebase/firestore';
 import { db } from '@/lib/firebase';
 
@@ -35,6 +34,7 @@ export default function Home() {
   const [content, setContent] = useState('');
   const [newTodo, setNewTodo] = useState('');
   const [loading, setLoading] = useState(true);
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
   // Firestore에서 메모 불러오기
   useEffect(() => {
@@ -42,24 +42,56 @@ export default function Home() {
     const q = query(notesRef, orderBy('createdAt', 'desc'));
 
     // 실시간 업데이트 구독
-    const unsubscribe = onSnapshot(q, (snapshot) => {
-      const notesData: Note[] = [];
-      snapshot.forEach((doc) => {
-        notesData.push({
-          id: doc.id,
-          ...doc.data(),
-        } as Note);
-      });
-      setNotes(notesData);
-      setLoading(false);
+    const unsubscribe = onSnapshot(
+      q,
+      (snapshot) => {
+        const notesData: Note[] = snapshot.docs.map((docSnapshot) => {
+          const data = docSnapshot.data() as Omit<Note, 'id'>;
+          return {
+            id: docSnapshot.id,
+            title: data.title ?? '',
+            content: data.content ?? '',
+            todos: data.todos ?? [],
+            createdAt: data.createdAt ?? '',
+          };
+        });
 
-      // 첫 번째 메모 자동 선택
-      if (notesData.length > 0 && !selectedNote) {
-        setSelectedNote(notesData[0]);
-        setTitle(notesData[0].title);
-        setContent(notesData[0].content);
-      }
-    });
+        setNotes(notesData);
+        setLoading(false);
+        setErrorMessage(null);
+
+        setSelectedNote((previous) => {
+          if (notesData.length === 0) {
+            setTitle('');
+            setContent('');
+            return null;
+          }
+
+          if (previous) {
+            const updatedSelected = notesData.find(
+              (note) => note.id === previous.id,
+            );
+            if (updatedSelected) {
+              setTitle(updatedSelected.title);
+              setContent(updatedSelected.content);
+              return updatedSelected;
+            }
+          }
+
+          const firstNote = notesData[0];
+          setTitle(firstNote.title);
+          setContent(firstNote.content);
+          return firstNote;
+        });
+      },
+      (error) => {
+        console.error('메모를 불러오지 못했습니다:', error);
+        setErrorMessage(
+          '메모를 불러오는 데 문제가 발생했어요. Firebase 환경 변수와 Firestore 설정을 다시 확인한 뒤 새로고침 해주세요.',
+        );
+        setLoading(false);
+      },
+    );
 
     return () => unsubscribe();
   }, []);
@@ -228,6 +260,35 @@ export default function Home() {
       <div className="flex h-screen items-center justify-center bg-gray-50 dark:bg-gray-900">
         <div className="text-center">
           <p className="text-gray-500 dark:text-gray-400 text-lg">메모를 불러오는 중...</p>
+        </div>
+      </div>
+    );
+  }
+
+  if (errorMessage) {
+    return (
+      <div className="flex h-screen items-center justify-center bg-gray-50 dark:bg-gray-900 px-6">
+        <div className="max-w-md text-center rounded-2xl bg-white p-8 shadow-lg dark:bg-gray-800">
+          <p className="text-lg font-semibold text-gray-900 dark:text-gray-100">
+            연결 오류
+          </p>
+          <p className="mt-3 text-sm leading-6 text-gray-600 dark:text-gray-400">
+            {errorMessage}
+          </p>
+          <div className="mt-6 flex flex-col gap-3 sm:flex-row sm:justify-center">
+            <button
+              onClick={() => window.location.reload()}
+              className="px-5 py-2.5 rounded-lg bg-blue-500 text-white text-sm font-medium hover:bg-blue-600 transition-colors"
+            >
+              새로고침
+            </button>
+            <button
+              onClick={createNewNote}
+              className="px-5 py-2.5 rounded-lg border border-gray-200 text-sm font-medium text-gray-700 hover:bg-gray-50 dark:border-gray-600 dark:text-gray-200 dark:hover:bg-gray-700"
+            >
+              새 메모 만들기
+            </button>
+          </div>
         </div>
       </div>
     );
