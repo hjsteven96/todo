@@ -1,6 +1,18 @@
 'use client';
 
 import { useState, useEffect } from 'react';
+import { 
+  collection, 
+  addDoc, 
+  updateDoc, 
+  deleteDoc, 
+  doc, 
+  getDocs, 
+  query, 
+  orderBy,
+  onSnapshot 
+} from 'firebase/firestore';
+import { db } from '@/lib/firebase';
 
 interface Todo {
   id: string;
@@ -22,42 +34,60 @@ export default function Home() {
   const [title, setTitle] = useState('');
   const [content, setContent] = useState('');
   const [newTodo, setNewTodo] = useState('');
+  const [loading, setLoading] = useState(true);
 
-  // 로컬 스토리지에서 메모 불러오기
+  // Firestore에서 메모 불러오기
   useEffect(() => {
-    const savedNotes = localStorage.getItem('notes');
-    if (savedNotes) {
-      const parsedNotes = JSON.parse(savedNotes);
-      setNotes(parsedNotes);
-      if (parsedNotes.length > 0) {
-        setSelectedNote(parsedNotes[0]);
-        setTitle(parsedNotes[0].title);
-        setContent(parsedNotes[0].content);
+    const notesRef = collection(db, 'notes');
+    const q = query(notesRef, orderBy('createdAt', 'desc'));
+
+    // 실시간 업데이트 구독
+    const unsubscribe = onSnapshot(q, (snapshot) => {
+      const notesData: Note[] = [];
+      snapshot.forEach((doc) => {
+        notesData.push({
+          id: doc.id,
+          ...doc.data(),
+        } as Note);
+      });
+      setNotes(notesData);
+      setLoading(false);
+
+      // 첫 번째 메모 자동 선택
+      if (notesData.length > 0 && !selectedNote) {
+        setSelectedNote(notesData[0]);
+        setTitle(notesData[0].title);
+        setContent(notesData[0].content);
       }
-    }
+    });
+
+    return () => unsubscribe();
   }, []);
 
-  // 메모 저장
-  const saveNotes = (updatedNotes: Note[]) => {
-    setNotes(updatedNotes);
-    localStorage.setItem('notes', JSON.stringify(updatedNotes));
-  };
-
   // 새 메모 생성
-  const createNewNote = () => {
-    const newNote: Note = {
-      id: Date.now().toString(),
-      title: '새 메모',
-      content: '',
-      todos: [],
-      createdAt: new Date().toISOString(),
-    };
-    const updatedNotes = [newNote, ...notes];
-    saveNotes(updatedNotes);
-    setSelectedNote(newNote);
-    setTitle(newNote.title);
-    setContent(newNote.content);
-    setNewTodo('');
+  const createNewNote = async () => {
+    try {
+      const newNote = {
+        title: '새 메모',
+        content: '',
+        todos: [],
+        createdAt: new Date().toISOString(),
+      };
+
+      const docRef = await addDoc(collection(db, 'notes'), newNote);
+      const createdNote: Note = {
+        id: docRef.id,
+        ...newNote,
+      };
+      
+      setSelectedNote(createdNote);
+      setTitle(createdNote.title);
+      setContent(createdNote.content);
+      setNewTodo('');
+    } catch (error) {
+      console.error('메모 생성 오류:', error);
+      alert('메모 생성에 실패했습니다.');
+    }
   };
 
   // 메모 선택
@@ -69,94 +99,139 @@ export default function Home() {
   };
 
   // 메모 업데이트
-  const updateNote = (field: 'title' | 'content', value: string) => {
+  const updateNote = async (field: 'title' | 'content', value: string) => {
     if (!selectedNote) return;
 
-    const updatedNote = {
-      ...selectedNote,
-      [field]: value,
-    };
-    const updatedNotes = notes.map((note) =>
-      note.id === selectedNote.id ? updatedNote : note
-    );
-    saveNotes(updatedNotes);
-    setSelectedNote(updatedNote);
+    try {
+      const noteRef = doc(db, 'notes', selectedNote.id);
+      const updatedNote = {
+        ...selectedNote,
+        [field]: value,
+      };
 
-    if (field === 'title') {
-      setTitle(value);
-    } else {
-      setContent(value);
+      await updateDoc(noteRef, {
+        [field]: value,
+      });
+
+      setSelectedNote(updatedNote);
+
+      if (field === 'title') {
+        setTitle(value);
+      } else {
+        setContent(value);
+      }
+    } catch (error) {
+      console.error('메모 업데이트 오류:', error);
+      alert('메모 업데이트에 실패했습니다.');
     }
   };
 
   // 투두 추가
-  const addTodo = () => {
+  const addTodo = async () => {
     if (!newTodo.trim() || !selectedNote) return;
 
-    const todo: Todo = {
-      id: Date.now().toString(),
-      text: newTodo.trim(),
-      completed: false,
-    };
+    try {
+      const todo: Todo = {
+        id: Date.now().toString(),
+        text: newTodo.trim(),
+        completed: false,
+      };
 
-    const updatedNote = {
-      ...selectedNote,
-      todos: [...selectedNote.todos, todo],
-    };
-    const updatedNotes = notes.map((note) =>
-      note.id === selectedNote.id ? updatedNote : note
-    );
-    saveNotes(updatedNotes);
-    setSelectedNote(updatedNote);
-    setNewTodo('');
+      const updatedTodos = [...selectedNote.todos, todo];
+      const noteRef = doc(db, 'notes', selectedNote.id);
+
+      await updateDoc(noteRef, {
+        todos: updatedTodos,
+      });
+
+      setSelectedNote({
+        ...selectedNote,
+        todos: updatedTodos,
+      });
+      setNewTodo('');
+    } catch (error) {
+      console.error('투두 추가 오류:', error);
+      alert('투두 추가에 실패했습니다.');
+    }
   };
 
   // 투두 완료 토글
-  const toggleTodo = (todoId: string) => {
+  const toggleTodo = async (todoId: string) => {
     if (!selectedNote) return;
 
-    const updatedNote = {
-      ...selectedNote,
-      todos: selectedNote.todos.map((todo) =>
+    try {
+      const updatedTodos = selectedNote.todos.map((todo) =>
         todo.id === todoId ? { ...todo, completed: !todo.completed } : todo
-      ),
-    };
-    const updatedNotes = notes.map((note) =>
-      note.id === selectedNote.id ? updatedNote : note
-    );
-    saveNotes(updatedNotes);
-    setSelectedNote(updatedNote);
+      );
+
+      const noteRef = doc(db, 'notes', selectedNote.id);
+      await updateDoc(noteRef, {
+        todos: updatedTodos,
+      });
+
+      setSelectedNote({
+        ...selectedNote,
+        todos: updatedTodos,
+      });
+    } catch (error) {
+      console.error('투두 업데이트 오류:', error);
+      alert('투두 업데이트에 실패했습니다.');
+    }
   };
 
   // 투두 삭제
-  const deleteTodo = (todoId: string) => {
+  const deleteTodo = async (todoId: string) => {
     if (!selectedNote) return;
 
-    const updatedNote = {
-      ...selectedNote,
-      todos: selectedNote.todos.filter((todo) => todo.id !== todoId),
-    };
-    const updatedNotes = notes.map((note) =>
-      note.id === selectedNote.id ? updatedNote : note
-    );
-    saveNotes(updatedNotes);
-    setSelectedNote(updatedNote);
+    try {
+      const updatedTodos = selectedNote.todos.filter((todo) => todo.id !== todoId);
+      const noteRef = doc(db, 'notes', selectedNote.id);
+
+      await updateDoc(noteRef, {
+        todos: updatedTodos,
+      });
+
+      setSelectedNote({
+        ...selectedNote,
+        todos: updatedTodos,
+      });
+    } catch (error) {
+      console.error('투두 삭제 오류:', error);
+      alert('투두 삭제에 실패했습니다.');
+    }
   };
 
   // 메모 삭제
-  const deleteNote = (noteId: string) => {
-    const updatedNotes = notes.filter((note) => note.id !== noteId);
-    saveNotes(updatedNotes);
-    if (selectedNote?.id === noteId) {
-      if (updatedNotes.length > 0) {
-        selectNote(updatedNotes[0]);
-      } else {
-        setSelectedNote(null);
-        setTitle('');
-        setContent('');
+  const deleteNote = async (noteId: string) => {
+    try {
+      const noteRef = doc(db, 'notes', noteId);
+      await deleteDoc(noteRef);
+
+      if (selectedNote?.id === noteId) {
+        const remainingNotes = notes.filter((note) => note.id !== noteId);
+        if (remainingNotes.length > 0) {
+          selectNote(remainingNotes[0]);
+        } else {
+          setSelectedNote(null);
+          setTitle('');
+          setContent('');
+        }
       }
+    } catch (error) {
+      console.error('메모 삭제 오류:', error);
+      alert('메모 삭제에 실패했습니다.');
     }
   };
+
+  if (loading) {
+    return (
+      <div className="flex h-screen items-center justify-center bg-gray-50 dark:bg-gray-900">
+        <div className="text-center">
+          <p className="text-gray-500 dark:text-gray-400 text-lg">메모를 불러오는 중...</p>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="flex h-screen bg-gray-50 dark:bg-gray-900">
